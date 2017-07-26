@@ -20,7 +20,13 @@ ACS5_CSV = "%s/acs5_2015_ma_subset.csv" % SOURCES
 ACS5_GEOID_PREFIX = "15000US"
 ACS5_POP_TOTAL_COL = "B01003e1"
 
-IGNORE_GEOIDS = ["250259901010", "250235001011", "250259813001", "250251805002", "250251805004"]
+IGNORE_GEOIDS = [
+    "250259901010", # ocean
+    "250235001011", # hull
+    "250259813001", # top right of boston logan, next to chelsea point
+    "250251805002", # winthrop
+    "250251805004" # winthrop
+]
 
 COLORMAP = "YlOrRd"
 #COLORMAP = "viridis_r"
