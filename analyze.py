@@ -15,6 +15,7 @@ import util
 SOURCES = "sources/"
 SHELTERS_JSON = "%s/shelters.json" % SOURCES
 ROUTES_JSON = "%s/shelter_routes.json" % SOURCES
+BOSTON_GEOJSON = "%s/boston.geojson" % SOURCES
 
 ACS5_CSV = "%s/acs5_2015_ma_subset.csv" % SOURCES
 ACS5_GEOID_PREFIX = "15000US"
@@ -35,10 +36,7 @@ STATS_JSON_TEMPLATE = "%s/shelter_stats_%%s_%%s.json" % OUTDIR
 # ignore
 IGNORE_GEOIDS = [
     "250259901010", # ocean
-    "250235001011", # hull
-    "250259813001", # top right of boston logan, next to chelsea point
-    "250251805002", # winthrop
-    "250251805004" # winthrop
+    "250235001011" # hull
 ]
 
 # appearance
@@ -46,7 +44,6 @@ COLORMAP = "YlOrRd"
 #COLORMAP = "Paired"
 #COLORMAP = "viridis_r"
 
-BOSTON_GEOJSON = "%s/boston.geojson" % SOURCES
 COLOR_INACCESSIBLE = "#47365c"
 
 SHELTER_COLOR = "#009999"
@@ -132,6 +129,9 @@ class Renderer(object):
 
         bg_to_shelter_lines = []
 
+        with open(BOSTON_GEOJSON, "r") as f:
+            boston_polygon = shapely.geometry.shape(json.load(f))
+
         # Reduce the number of spatial calculations
         # Additionally, excluded_shelters can be used for stylistic reasons
         excluded_shelters = set()
@@ -146,7 +146,14 @@ class Renderer(object):
 
         for doc in docs:
             if (not doc["blockgroup"]["geoid"] in IGNORE_GEOIDS):
+
                 bg_geoid = doc["blockgroup"]["geoid"]
+
+                if (not boston_polygon.contains(
+                    shapely.geometry.Point(doc["blockgroup"]["centroid"])
+                )):
+                    print("skipping block group %s" % bg_geoid)
+                    continue
 
                 bg_acs5_geoid = ACS5_GEOID_PREFIX + bg_geoid
                 bg_pop = self.acs5[ACS5_POP_TOTAL_COL][bg_acs5_geoid]
@@ -255,13 +262,12 @@ class Renderer(object):
             ))
 
         # plot Boston city boundaries
-        with open(BOSTON_GEOJSON, "r") as f:
-            axis.add_patch(descartes.PolygonPatch(
-                json.load(f),
-                facecolor = "none",
-                edgecolor = "#bbbbbb",
-                linewidth = 0.5
-            ))
+        axis.add_patch(descartes.PolygonPatch(
+            shapely.geometry.mapping(boston_polygon),
+            facecolor = "none",
+            edgecolor = "#bbbbbb",
+            linewidth = 0.5
+        ))
 
         ## shelter plotting
         shelter_pops_values = [
