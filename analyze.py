@@ -44,7 +44,7 @@ COLORMAP = "YlOrRd"
 #COLORMAP = "Paired"
 #COLORMAP = "viridis_r"
 
-COLOR_INACCESSIBLE = "#47365c"
+COLOR_INACCESSIBLE = "#bbbbbb"
 
 SHELTER_COLOR = "#009999"
 SHELTER_COLOR_EXCLUDED = "#009e00"
@@ -334,34 +334,33 @@ class Renderer(object):
         colorbar.set_label("Average transit time, in minutes")
 
         ## legend
-        pyplot.legend(
-            loc = "lower right",
-            handles=[
-                lines.Line2D(
-                    [], [], linewidth = 0, marker = "o",
-                    markersize = LEGEND_MARKER_SIZE,
-                    color = SHELTER_COLOR_EXCLUDED,
-                    label = "Excluded shelter"
-                ),
-                lines.Line2D(
-                    [], [], linewidth = 0, marker = "o",
-                    markersize = LEGEND_MARKER_SIZE,
-                    color = SHELTER_COLOR,
-                    label = "Active shelter"
-                ),
-                lines.Line2D(
-                    [], [], linewidth = 0, marker = "o",
-                    markersize = LEGEND_MARKER_SIZE,
-                    color = SHELTER_COLOR_UNUSED,
-                    label = "Unused shelter"
-                ),
+        handles = [
+            lines.Line2D(
+                [], [], linewidth = 0, marker = "o",
+                markersize = LEGEND_MARKER_SIZE,
+                color = SHELTER_COLOR,
+                label = "Active shelter"
+            ),
+            lines.Line2D(
+                [], [], linewidth = 0, marker = "o",
+                markersize = LEGEND_MARKER_SIZE,
+                color = SHELTER_COLOR_UNUSED,
+                label = "Unused shelter"
+            ),
 
-                patches.Patch(
-                    color = COLOR_INACCESSIBLE,
-                    label = "No access to shelters"
-                )
-            ]
-        )
+            patches.Patch(
+                color = COLOR_INACCESSIBLE,
+                label = "No access to shelters"
+            )
+        ]
+        if (len(excluded_shelters) > 0):
+            handles = [lines.Line2D(
+                [], [], linewidth = 0, marker = "o",
+                markersize = LEGEND_MARKER_SIZE,
+                color = SHELTER_COLOR_EXCLUDED,
+                label = "Excluded shelter"
+            )] + handles
+        pyplot.legend(loc = "lower right", handles = handles)
 
         pyplot.show()
         pyplot.close()
@@ -373,4 +372,5 @@ if (__name__ == "__main__"):
     #update_routes()
     r = Renderer()
     #r.render("walk", 3, ["ZONE A", "ZONE B"])
-    r.render("transit", 3)
+    r.render("walk", 3, None)
+    r.render("walk", 3)
