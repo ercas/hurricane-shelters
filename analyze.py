@@ -16,6 +16,9 @@ SOURCES = "sources/"
 SHELTERS_JSON = "%s/shelters.json" % SOURCES
 ROUTES_JSON = "%s/shelter_routes.json" % SOURCES
 BOSTON_GEOJSON = "%s/boston.geojson" % SOURCES
+with open(BOSTON_GEOJSON, "r") as f:
+    BOSTON_POLYGON = shapely.geometry.shape(json.load(f))
+
 
 ACS5_CSV = "%s/acs5_2015_ma_subset.csv" % SOURCES
 ACS5_GEOID_PREFIX = "15000US"
@@ -96,153 +99,157 @@ def update_routes():
 
             json.dump(docs, f_out, indent = 4)
 
-class Renderer(object):
+class Analyst(object):
 
     def __init__(self):
-        print("Loading acs5 csv")
         self.acs5 = pandas.read_csv(ACS5_CSV)
         self.acs5.index = self.acs5.pop("GEOID")
 
-        self.colormap = cm.get_cmap(COLORMAP)
+    def analyze(self, mode, n_closest, excluded_zones = EVAC_EXCLUDE):
 
-        self.mongo = pymongo.MongoClient()
+        data = {
+            # Structure:
+            #     key: String representation of shelter object ID
+            #     value: Population that that shelter serves
+            "shelter_pops": {},
 
-    def render(self, mode, n_closest,
-               exclude_shelters_from_zones = EVAC_EXCLUDE):
+            # Array of the JSON data for all shelters encountered during the
+            # analysis
+            "shelters": [],
 
-        print("Rendering %s, %d closest shelters" % (mode, n_closest))
-        blockgroup_collection = self.mongo[BG_DB][BG_COLLECTION]
-        figure, axis = pyplot.subplots()
+            # Contains dictionaries with the following indices:
+            # avg_travel: The average travel time, or False if no routes could
+            #     be made to this block group
+            # geoid: GEOID string
+            # geojson: GeoJSON dict
+            # population: population int
+            "blockgroups": [],
 
-        # Structure:
-        #     key: String representation of shelter object ID
-        #     value: Population that that shelter serves
-        shelter_pops = {}
+            # Origin-destination pairs of coordinate pairs of straight lines
+            # between block groups and shelters
+            "bg_to_shelter_lines": [],
 
-        # Contains dictionaries with the following indices:
-        # avg_travel: The average travel time, or False if no routes could be
-        #     made to this block group
-        # geoid: GEOID string
-        # geojson: GeoJSON dict
-        # population: population int
-        blockgroups = []
+            # Reduce the number of spatial calculations
+            # Additionally, excluded_shelters can be used for stylistic reasons
+            "excluded_shelters": set(),
 
-        bg_to_shelter_lines = []
+            # Analysis parameter information
+            "mode": mode,
+            "n_closest": n_closest,
+            "excluded_zones": excluded_zones
+        }
 
-        with open(BOSTON_GEOJSON, "r") as f:
-            boston_polygon = shapely.geometry.shape(json.load(f))
-
-        # Reduce the number of spatial calculations
-        # Additionally, excluded_shelters can be used for stylistic reasons
-        excluded_shelters = set()
         not_excluded_shelters = set()
 
         exclude_polygon = False
-        if (type(exclude_shelters_from_zones) is list):
-            exclude_polygon = util.union_evac_zones(exclude_shelters_from_zones)
+        if (type(excluded_zones) is list):
+            exclude_polygon = util.union_evac_zones(excluded_zones)
 
         with open(UPDATED_ROUTES_TEMPLATE % mode, "r") as f:
-            docs = json.load(f)
+            for doc in json.load(f):
+                if (not doc["blockgroup"]["geoid"] in IGNORE_GEOIDS):
 
-        for doc in docs:
-            if (not doc["blockgroup"]["geoid"] in IGNORE_GEOIDS):
+                    bg_geoid = doc["blockgroup"]["geoid"]
 
-                bg_geoid = doc["blockgroup"]["geoid"]
+                    if (not BOSTON_POLYGON.contains(
+                        shapely.geometry.Point(doc["blockgroup"]["centroid"])
+                    )):
+                        print("skipping block group %s" % bg_geoid)
+                        continue
 
-                if (not boston_polygon.contains(
-                    shapely.geometry.Point(doc["blockgroup"]["centroid"])
-                )):
-                    print("skipping block group %s" % bg_geoid)
-                    continue
+                    bg_acs5_geoid = ACS5_GEOID_PREFIX + bg_geoid
+                    bg_pop = self.acs5[ACS5_POP_TOTAL_COL][bg_acs5_geoid]
 
-                bg_acs5_geoid = ACS5_GEOID_PREFIX + bg_geoid
-                bg_pop = self.acs5[ACS5_POP_TOTAL_COL][bg_acs5_geoid]
+                    travel_times = []
 
-                # list of the durations of the n closest paths, if any. ignores
-                # all entries where the route is False; if the length is zero,
-                # no routes could be made from this block group
-                """
-                travel_times = [
-                    mode["duration"]
-                    for mode in list(filter(
-                        lambda x: x is not False,
-                        [
-                            shelter["routes"][mode] for shelter in doc["shelters"]
-                        ]
-                    ))[:n_closest]
-                ]
-                """
+                    for shelter in doc["shelters"]:
 
-                travel_times = []
+                        if (not shelter in data["shelters"]):
+                            data["shelters"].append(shelter)
 
-                for shelter in doc["shelters"]:
+                        if (shelter["routes"][mode] is not False):
 
-                    if (shelter["routes"][mode] is not False):
+                            if (exclude_polygon):
+                                object_id = shelter["objectid"]
 
-                        if (exclude_polygon):
-                            object_id = shelter["objectid"]
+                                if (object_id in data["excluded_shelters"]):
+                                    continue
+                                elif (object_id in not_excluded_shelters):
+                                    pass
+                                elif (exclude_polygon.contains(
+                                    shapely.geometry.Point(shelter["coordinates"])
+                                )):
+                                    data["excluded_shelters"].add(object_id)
+                                    continue
+                                else:
+                                    not_excluded_shelters.add(object_id)
 
-                            if (object_id in excluded_shelters):
-                                continue
-                            elif (object_id in not_excluded_shelters):
-                                pass
-                            elif (exclude_polygon.contains(
-                                shapely.geometry.Point(shelter["coordinates"])
-                            )):
-                                excluded_shelters.add(object_id)
-                                continue
+                            travel_times.append(
+                                shelter["routes"][mode]["duration"]
+                            )
+
+                            object_id_str = str(shelter["objectid"])
+                            if (object_id_str in data["shelter_pops"]):
+                                data["shelter_pops"][object_id_str] += bg_pop
                             else:
-                                not_excluded_shelters.add(object_id)
+                                data["shelter_pops"][object_id_str] = bg_pop
 
-                        travel_times.append(
-                            shelter["routes"][mode]["duration"]
-                        )
+                            data["bg_to_shelter_lines"].append([
+                                shelter["coordinates"],
+                                doc["blockgroup"]["centroid"]
+                            ])
 
-                        object_id_str = str(shelter["objectid"])
-                        if (object_id_str in shelter_pops):
-                            shelter_pops[object_id_str] += bg_pop
-                        else:
-                            shelter_pops[object_id_str] = bg_pop
+                        if (len(travel_times) == n_closest):
+                            break
 
-                        bg_to_shelter_lines.append([
-                            shelter["coordinates"],
-                            doc["blockgroup"]["centroid"]
-                        ])
+                    if (len(travel_times) > 0):
+                        bg_avg_travel = sum(travel_times) / len(travel_times)
+                    else:
+                        bg_avg_travel = False
 
-                    if (len(travel_times) == n_closest):
-                        break
+                    data["blockgroups"].append({
+                        "avg_travel": bg_avg_travel / 60,
+                        "geoid": bg_geoid,
+                        "population": bg_pop
+                    })
 
-                if (len(travel_times) > 0):
-                    bg_avg_travel = sum(travel_times) / len(travel_times)
-                else:
-                    bg_avg_travel = False
+        return data
 
-                print(bg_geoid, bg_pop, bg_avg_travel)
+class Renderer(object):
 
-                blockgroups.append({
-                    "avg_travel": bg_avg_travel / 60,
-                    "geoid": bg_geoid,
-                    "geojson": blockgroup_collection.find_one({
-                        "properties.GEOID": bg_geoid
-                    })["geometry"]["geometries"][1],
-                    "population": bg_pop
-                })
+    def __init__(self):
+        self.analyst = Analyst()
+        self.colormap = cm.get_cmap(COLORMAP)
+        self.mongo = pymongo.MongoClient()
 
-        print("excluded shelters: %s" % excluded_shelters)
-        print("Populations served by shelters: %s" % shelter_pops)
+    def render(self, data):
+
+        print("Rendering %s, %d closest shelters" % (
+            data["mode"], data["n_closest"]
+        ))
+        blockgroup_collection = self.mongo[BG_DB][BG_COLLECTION]
+        figure, axis = pyplot.subplots()
+
+        print("excluded shelters: %s" % data["excluded_shelters"])
+        print("Populations served by shelters: %s" % data["shelter_pops"])
 
         axis.set_xlim([-71.2, -70.9])
         axis.set_ylim([42.21, 42.42])
 
         ## blockgroup plotting
-        bg_travel = [blockgroup["avg_travel"] for blockgroup in blockgroups]
+        bg_travel = [
+            blockgroup["avg_travel"]
+            for blockgroup in data["blockgroups"]
+        ]
         min_bg_travel = min(bg_travel)
         max_bg_travel = max(bg_travel)
         bg_travel_range = max_bg_travel - min_bg_travel
 
         colormap_normalize = colors.Normalize(min_bg_travel, max_bg_travel)
 
-        for blockgroup in blockgroups:
+        for blockgroup in data["blockgroups"]:
+            bg_geoid = blockgroup["geoid"]
+
             if blockgroup["avg_travel"]:
                 facecolor = self.colormap(
                     colormap_normalize(blockgroup["avg_travel"])
@@ -254,8 +261,11 @@ class Renderer(object):
             #edgecolor_hsv = colors.rgb_to_hsv(facecolor[:3])
             #edgecolor_hsv[2] *= 0.5
 
+            print("rendering block group %s" % bg_geoid)
             axis.add_patch(descartes.PolygonPatch(
-                blockgroup["geojson"],
+                blockgroup_collection.find_one({
+                    "properties.GEOID": bg_geoid
+                })["geometry"]["geometries"][1],
                 facecolor = facecolor,
                 #edgecolor = colors.hsv_to_rgb(edgecolor_hsv)
                 edgecolor = facecolor
@@ -263,7 +273,7 @@ class Renderer(object):
 
         # plot Boston city boundaries
         axis.add_patch(descartes.PolygonPatch(
-            shapely.geometry.mapping(boston_polygon),
+            shapely.geometry.mapping(BOSTON_POLYGON),
             facecolor = "none",
             edgecolor = "#bbbbbb",
             linewidth = 0.5
@@ -271,18 +281,18 @@ class Renderer(object):
 
         ## shelter plotting
         shelter_pops_values = [
-            shelter_pops[objectid] / 3
-            for objectid in shelter_pops
+            data["shelter_pops"][objectid] / 3
+            for objectid in data["shelter_pops"]
         ]
         min_pop = min(shelter_pops_values)
         max_pop = max(shelter_pops_values)
         pop_range = max_pop - min_pop
 
-        for shelter in doc["shelters"]:
+        for shelter in data["shelters"]:
             object_id_str = str(shelter["objectid"])
 
-            if (object_id_str in shelter_pops):
-                pop = shelter_pops[object_id_str]
+            if (object_id_str in data["shelter_pops"]):
+                pop = data["shelter_pops"][object_id_str]
                 pop_normalized = (pop - min_pop) / pop_range
                 last_shelter = axis.plot(
                     shelter["coordinates"][0],
@@ -295,7 +305,7 @@ class Renderer(object):
                 )
 
             # excluded by query
-            elif (shelter["objectid"] in excluded_shelters):
+            elif (shelter["objectid"] in data["excluded_shelters"]):
                 last_shelter_excluded = axis.plot(
                     shelter["coordinates"][0],
                     shelter["coordinates"][1],
@@ -316,7 +326,7 @@ class Renderer(object):
 
         ## lines from shelters to block groups
         axis.add_collection(collections.LineCollection(
-            bg_to_shelter_lines,
+            data["bg_to_shelter_lines"],
             colors = SHELTER_LINK_COLOR,
             linewidths = SHELTER_LINK_LINEWIDTH,
             alpha = SHELTER_LINK_OPACITY
@@ -325,7 +335,9 @@ class Renderer(object):
         ## final tweaks
         pyplot.title(
             "Relationships between block groups and the %d closest "
-            "shelters; mode of transit = %s" % (n_closest, mode)
+            "shelters; mode of transit = %s" % (
+                data["n_closest"], data["mode"]
+            )
         )
 
         mappable = pyplot.cm.ScalarMappable(colormap_normalize, COLORMAP)
@@ -353,7 +365,7 @@ class Renderer(object):
                 label = "No access to shelters"
             )
         ]
-        if (len(excluded_shelters) > 0):
+        if (len(data["excluded_shelters"]) > 0):
             handles = [lines.Line2D(
                 [], [], linewidth = 0, marker = "o",
                 markersize = LEGEND_MARKER_SIZE,
@@ -370,7 +382,7 @@ if (__name__ == "__main__"):
         os.mkdir(OUTDIR)
 
     #update_routes()
+    a = Analyst()
     r = Renderer()
     #r.render("walk", 3, ["ZONE A", "ZONE B"])
-    r.render("walk", 3, None)
-    r.render("walk", 3)
+    r.render(a.analyze("walk", 3, None))
