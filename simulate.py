@@ -12,6 +12,8 @@ import time
 import route_distances
 import otpmanager
 
+import util
+
 BOSTON_BOUNDING_BOX = {
     "left": -71.191155,
     "bottom": 42.227926,
@@ -22,6 +24,8 @@ BOSTON_BOUNDING_BOX = {
 CACHED_SHELTERS_JSON_URL = "https://services.arcgis.com/sFnw0xNflSi8J0uh/arcgis/rest/services/Neighborhood_Emergency_Shelters/FeatureServer/0/query?f=json&where=1=1&returnGeometry=true&spatialRel=esriSpatialRelIntersects&outFields=*&outSR=102100&resultOffset=0&resultRecordCount=1000"
 
 CACHED_SHELTERS_JSON_PATH = "sources/shelters.json"
+
+EVAC_ZONES = ["ZONE A", "ZONE B", "ZONE C"]
 
 MONGO_DB = "local"
 
@@ -81,20 +85,9 @@ def find_blockgroups():
     """
 
     blockgroups_collection = pymongo.MongoClient()["tiger_2016"]["blockgroups"]
-    evac_zones = pymongo.MongoClient()["massgis_mapserver"]["CityServices.Evacuation"]
 
     # union the evacuation zones
-    evac_union = None
-    for zone in ["ZONE A", "ZONE B", "ZONE C"]:
-        # create a very small buffer so that they will overlap barely
-        zone_shape = shapely.geometry.shape(
-            evac_zones.find_one({"properties.ZONE": zone})["geometry"]["geometries"][1]
-        ).buffer(1e-9)
-
-        if (evac_union is None):
-            evac_union = zone_shape
-        else:
-            evac_union = evac_union.union(zone_shape)
+    evac_union = util.evac_union_zones(EVAC_ZONES)
 
     # find blockgroups whose polygons intersect the evacuation zone
     blockgroups = list(blockgroups_collection.find({
