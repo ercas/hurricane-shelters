@@ -49,9 +49,9 @@ COLORMAP = "YlOrRd"
 
 COLOR_INACCESSIBLE = "#bbbbbb"
 
-SHELTER_COLOR = "#009999"
-SHELTER_COLOR_EXCLUDED = "#009e00"
-SHELTER_COLOR_UNUSED = "#1b1bb3"
+SHELTER_COLOR = "#4daf4a"
+SHELTER_COLOR_EXCLUDED = "#377eb8"
+SHELTER_COLOR_UNUSED = "#984ea3"
 SHELTER_MIN_SIZE = 2
 SHELTER_MAX_SIZE = 5
 
@@ -220,14 +220,24 @@ class Renderer(object):
     def __init__(self):
         self.analyst = Analyst()
         self.colormap = cm.get_cmap(COLORMAP)
-        self.mongo = pymongo.MongoClient()
+        self.blockgroup_collection = pymongo.MongoClient()[BG_DB][BG_COLLECTION]
+        self.blockgroup_polygon_cache = {}
 
-    def render(self, data):
+    def retrieve_blockgroup_polygon(self, geoid):
+        if (geoid in self.blockgroup_polygon_cache):
+            return self.blockgroup_polygon_cache[geoid]
+        else:
+            blockgroup_polygon = self.blockgroup_collection.find_one({
+                "properties.GEOID": geoid
+            })["geometry"]["geometries"][1]
 
-        print("Rendering %s, %d closest shelters" % (
-            data["mode"], data["n_closest"]
-        ))
-        blockgroup_collection = self.mongo[BG_DB][BG_COLLECTION]
+            self.blockgroup_polygon_cache[geoid] = blockgroup_polygon
+            print("cached %s" % geoid)
+
+            return blockgroup_polygon
+
+    def render(self, data, min_colorbar = None, max_colorbar = None):
+
         figure, axis = pyplot.subplots()
 
         print("excluded shelters: %s" % data["excluded_shelters"])
@@ -245,7 +255,13 @@ class Renderer(object):
         max_bg_travel = max(bg_travel)
         bg_travel_range = max_bg_travel - min_bg_travel
 
-        colormap_normalize = colors.Normalize(min_bg_travel, max_bg_travel)
+        if (
+            (min_colorbar is not None)
+            and (max_colorbar is not None)
+        ):
+            colormap_normalize = colors.Normalize(min_colorbar, max_colorbar)
+        else:
+            colormap_normalize = colors.Normalize(min_bg_travel, max_bg_travel)
 
         for blockgroup in data["blockgroups"]:
             bg_geoid = blockgroup["geoid"]
@@ -263,9 +279,7 @@ class Renderer(object):
 
             print("rendering block group %s" % bg_geoid)
             axis.add_patch(descartes.PolygonPatch(
-                blockgroup_collection.find_one({
-                    "properties.GEOID": bg_geoid
-                })["geometry"]["geometries"][1],
+                self.retrieve_blockgroup_polygon(bg_geoid),
                 facecolor = facecolor,
                 #edgecolor = colors.hsv_to_rgb(edgecolor_hsv)
                 edgecolor = facecolor
@@ -357,7 +371,7 @@ class Renderer(object):
                 [], [], linewidth = 0, marker = "o",
                 markersize = LEGEND_MARKER_SIZE,
                 color = SHELTER_COLOR_UNUSED,
-                label = "Unused shelter"
+                label = "Out of range shelter"
             ),
 
             patches.Patch(
@@ -370,10 +384,15 @@ class Renderer(object):
                 [], [], linewidth = 0, marker = "o",
                 markersize = LEGEND_MARKER_SIZE,
                 color = SHELTER_COLOR_EXCLUDED,
-                label = "Excluded shelter"
+                label = "Unsafe shelter"
             )] + handles
         pyplot.legend(loc = "lower right", handles = handles)
 
+        ## remove tick marks around the map
+        axis.set_xticks([])
+        axis.set_yticks([])
+
+        ## finished
         pyplot.show()
         pyplot.close()
 
@@ -384,5 +403,6 @@ if (__name__ == "__main__"):
     #update_routes()
     a = Analyst()
     r = Renderer()
-    #r.render("walk", 3, ["ZONE A", "ZONE B"])
+    #r.render(a.analyze("walk", 3, None))
+    r.render(a.analyze("walk", 3))
     r.render(a.analyze("walk", 3, None))
