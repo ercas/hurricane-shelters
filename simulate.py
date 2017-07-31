@@ -145,7 +145,8 @@ def get_routes(instructions):
     results = {
         "blockgroup": {
             "geoid": instructions["geoid"],
-            "origin": instructions["origin"]
+            "origin": instructions["origin"],
+            "centroid": instructions["origin"]
         },
         "shelters": []
     }
@@ -167,7 +168,7 @@ def get_routes(instructions):
         printjson(shelter_results)
         results["shelters"].append(shelter_results)
 
-    pymongo[MONGO_DB][MONGO_COLLECTION].insert_one(results)
+    pymongo.MongoClient()[MONGO_DB][MONGO_COLLECTION].insert_one(results)
 
 def main(threads = multiprocessing.cpu_count()):
     print("preloading shelters")
@@ -185,18 +186,20 @@ def main(threads = multiprocessing.cpu_count()):
     print("building instruction set")
     for blockgroup in blockgroups:
         geoid = blockgroup["properties"]["GEOID"]
+        centroid = list(shapely.geometry.shape(
+            blockgroup["geometry"]["geometries"][1]
+        ).centroid.coords)[0]
 
         if (geoid in ORIGIN_OVERRIDES):
             origin = ORIGIN_OVERRIDES[geoid]
             print("overriding %s origin point: %s" % (geoid, origin))
         else:
-            origin = list(shapely.geometry.shape(
-                blockgroup["geometry"]["geometries"][1]
-            ).centroid.coords)[0]
+            origin = centroid
 
         instructions.append({
             "geoid": geoid,
             "origin": origin,
+            "centroi": centroid,
             "otp_host": "localhost:%d" % manager.port
         })
 
