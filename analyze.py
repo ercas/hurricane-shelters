@@ -209,7 +209,7 @@ class Analyst(object):
 
                             data["bg_to_shelter_lines"].append([
                                 shelter["coordinates"],
-                                doc["blockgroup"]["centroid"]
+                                doc["blockgroup"]["origin"]
                             ])
 
                         if (len(travel_times) == n_closest):
@@ -455,7 +455,8 @@ def render_all_modes(n_closest_list = [1, 3], excluded_zones = EVAC_EXCLUDE):
     for n_closest in n_closest_list:
         for mode in data:
             print("Analyzing %s; %d closest" % (mode, n_closest))
-            data[mode][str(n_closest)] = a.analyze(mode, n_closest)
+            data[mode][str(n_closest)] = a.analyze(mode, n_closest,
+                                                   excluded_zones)
 
     all_travel = []
     for n_closest in n_closest_list:

@@ -33,6 +33,12 @@ MONGO_COLLECTION = "shelter_routes"
 
 OTP_PATH = "%s/otp-1.1.0-shaded.jar" % os.path.expanduser("~")
 
+ORIGIN_OVERRIDES = {
+    "250259813002": [-71.01728, 42.36671], # logan airport
+    "250259817001": [-71.06843, 42.35438], # boston common
+    "250250008032": [-71.11566, 42.35170] # bu agganis arena
+}
+
 def printjson(json_):
     """ Print a dictionary in human readable, indented format
 
@@ -87,7 +93,7 @@ def find_blockgroups():
     blockgroups_collection = pymongo.MongoClient()["tiger_2016"]["blockgroups"]
 
     # union the evacuation zones
-    evac_union = util.evac_union_zones(EVAC_ZONES)
+    evac_union = util.union_evac_zones(EVAC_ZONES)
 
     # find blockgroups whose polygons intersect the evacuation zone
     blockgroups = list(blockgroups_collection.find({
@@ -134,12 +140,12 @@ def get_geojson():
 def get_routes(instructions):
     geojson = get_geojson()
     router = route_distances.OTPDistances(instructions["otp_host"])
-    from_coords = instructions["centroid"]
+    from_coords = instructions["origin"]
 
     results = {
         "blockgroup": {
             "geoid": instructions["geoid"],
-            "centroid": instructions["centroid"]
+            "origin": instructions["origin"]
         },
         "shelters": []
     }
@@ -178,11 +184,19 @@ def main(threads = multiprocessing.cpu_count()):
 
     print("building instruction set")
     for blockgroup in blockgroups:
-        instructions.append({
-            "geoid": blockgroup["properties"]["GEOID"],
-            "centroid": list(shapely.geometry.shape(
+        geoid = blockgroup["properties"]["GEOID"]
+
+        if (geoid in ORIGIN_OVERRIDES):
+            origin = ORIGIN_OVERRIDES[geoid]
+            print("overriding %s origin point: %s" % (geoid, origin))
+        else:
+            origin = list(shapely.geometry.shape(
                 blockgroup["geometry"]["geometries"][1]
-            ).centroid.coords)[0],
+            ).centroid.coords)[0]
+
+        instructions.append({
+            "geoid": geoid,
+            "origin": origin,
             "otp_host": "localhost:%d" % manager.port
         })
 
