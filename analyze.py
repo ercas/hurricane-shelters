@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 from matplotlib import cm, collections, colors, lines, patches, pyplot
+from cartopy import crs
+from cartopy.io import img_tiles
 import descartes
 import itertools
 import json
@@ -46,22 +48,27 @@ IGNORE_GEOIDS = [
 # appearance
 DPI = 400
 TITLE_FONT_SIZE = 8
+BOUNDING_BOX = [-71.2, 42.21, -70.9, 42.42]
 
 COLORMAP = "YlOrRd"
 #COLORMAP = "Paired"
 #COLORMAP = "viridis_r"
 
+BOSTON_BOUNDARIES_COLOR = "#777777"
 COLOR_INACCESSIBLE = "#bbbbbb"
+POLY_OPACITY = 0.8
 
 SHELTER_COLOR = "#4daf4a"
 SHELTER_COLOR_EXCLUDED = "#377eb8"
-SHELTER_COLOR_UNUSED = "#984ea3"
+#SHELTER_COLOR_UNUSED = "#984ea3"
+#SHELTER_COLOR_UNUSED = SHELTER_COLOR
+SHELTER_COLOR_UNUSED = "#2f6b2d" # darker version of shelter_color
 SHELTER_MIN_SIZE = 2
 SHELTER_MAX_SIZE = 5
 
 SHELTER_LINK_COLOR = "#294040"
-SHELTER_LINK_LINEWIDTH = 1
-SHELTER_LINK_OPACITY = 0.1
+SHELTER_LINK_LINEWIDTH = 0.25
+SHELTER_LINK_OPACITY = 0.2
 
 LEGEND_MARKER_SIZE = 6
 
@@ -271,13 +278,32 @@ class Renderer(object):
                 None, these are calculated from the data
         """
 
-        figure, axis = pyplot.subplots()
-
         #print("Excluded shelters: %s" % data["excluded_shelters"])
         #print("Populations served by shelters: %s" % data["shelter_pops"])
 
-        axis.set_xlim([-71.2, -70.9])
-        axis.set_ylim([42.21, 42.42])
+        stamen_terrain = img_tiles.StamenTerrain()
+        point_transform = crs.Geodetic()
+        poly_transform = crs.PlateCarree()
+
+        figure, axis = pyplot.subplots(
+            subplot_kw = {"projection": stamen_terrain.crs}
+        )
+
+        axis.set_extent([
+            BOUNDING_BOX[0], BOUNDING_BOX[2], BOUNDING_BOX[1], BOUNDING_BOX[3]
+        ])
+        axis.add_image(stamen_terrain, 13)
+
+        ## city boundaries
+        boston_patch = descartes.PolygonPatch(
+            shapely.geometry.mapping(BOSTON_POLYGON),
+            facecolor = "none",
+            edgecolor = BOSTON_BOUNDARIES_COLOR,
+            linewidth = 0.5,
+            alpha = POLY_OPACITY
+        )
+        boston_patch.set_transform(poly_transform)
+        axis.add_patch(boston_patch)
 
         ## blockgroup plotting
         bg_travel = [
@@ -311,20 +337,15 @@ class Renderer(object):
             #edgecolor_hsv[2] *= 0.5
 
             #print("Adding block group %s" % bg_geoid)
-            axis.add_patch(descartes.PolygonPatch(
+            patch = descartes.PolygonPatch(
                 self.retrieve_blockgroup_polygon(bg_geoid),
                 facecolor = facecolor,
                 #edgecolor = colors.hsv_to_rgb(edgecolor_hsv)
-                edgecolor = facecolor
-            ))
-
-        # plot Boston city boundaries
-        axis.add_patch(descartes.PolygonPatch(
-            shapely.geometry.mapping(BOSTON_POLYGON),
-            facecolor = "none",
-            edgecolor = "#bbbbbb",
-            linewidth = 0.5
-        ))
+                edgecolor = facecolor,
+                alpha = POLY_OPACITY
+            )
+            patch.set_transform(poly_transform)
+            axis.add_patch(patch)
 
         ## shelter plotting
         shelter_pops_values = [
@@ -348,7 +369,8 @@ class Renderer(object):
                     markersize = SHELTER_MIN_SIZE + (
                         pop_normalized * (SHELTER_MAX_SIZE - SHELTER_MIN_SIZE)
                     ),
-                    color = SHELTER_COLOR
+                    color = SHELTER_COLOR,
+                    transform = point_transform
                 )
 
             # excluded by query
@@ -358,7 +380,8 @@ class Renderer(object):
                     shelter["coordinates"][1],
                     marker = "o",
                     markersize = SHELTER_MIN_SIZE,
-                    color = SHELTER_COLOR_EXCLUDED
+                    color = SHELTER_COLOR_EXCLUDED,
+                    transform = point_transform
                 )
 
             # not among the n closest of any block group
@@ -368,16 +391,19 @@ class Renderer(object):
                     shelter["coordinates"][1],
                     marker = "o",
                     markersize = SHELTER_MIN_SIZE,
-                    color = SHELTER_COLOR_UNUSED
+                    color = SHELTER_COLOR_UNUSED,
+                    transform = point_transform
                 )
 
         ## lines from shelters to block groups
-        axis.add_collection(collections.LineCollection(
+        line_collection = collections.LineCollection(
             data["bg_to_shelter_lines"],
             colors = SHELTER_LINK_COLOR,
             linewidths = SHELTER_LINK_LINEWIDTH,
             alpha = SHELTER_LINK_OPACITY
-        ))
+        )
+        line_collection.set_transform(poly_transform)
+        axis.add_collection(line_collection)
 
         ## final tweaks
         if (data["n_closest"] > 1):
@@ -403,18 +429,19 @@ class Renderer(object):
                 [], [], linewidth = 0, marker = "o",
                 markersize = LEGEND_MARKER_SIZE,
                 color = SHELTER_COLOR,
-                label = "Active shelter"
+                label = "Shelter"
+                #label = "Active shelter"
             ),
-            lines.Line2D(
-                [], [], linewidth = 0, marker = "o",
-                markersize = LEGEND_MARKER_SIZE,
-                color = SHELTER_COLOR_UNUSED,
-                label = "Out of range shelter"
-            ),
+            #lines.Line2D(
+            #    [], [], linewidth = 0, marker = "o",
+            #    markersize = LEGEND_MARKER_SIZE,
+            #    color = SHELTER_COLOR_UNUSED,
+            #    label = "Out-of-way shelter"
+            #),
 
             patches.Patch(
                 color = COLOR_INACCESSIBLE,
-                label = "No access to shelters"
+                label = "No easy access to shelters"
             )
         ]
         if (len(data["excluded_shelters"]) > 0):
@@ -480,5 +507,5 @@ if (__name__ == "__main__"):
         os.mkdir(OUTDIR)
 
     #Renderer().render(Analyst().analyze("walk", 3))
-    #render_all_modes()
-    render_all_modes(excluded_zones = None)
+    render_all_modes()
+    #render_all_modes(excluded_zones = None)
